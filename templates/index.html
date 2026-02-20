@@ -112,16 +112,24 @@
         <button type="submit">Analyze Video</button>
     </form>
 
-    {% if percent is defined %}
+    {% if damage_percentage is defined %}
     <div class="result">
-        <p><strong>Total Frames:</strong> {{ total }}</p>
-        <p><strong>Pothole Frames:</strong> {{ potholes }}</p>
-        <p><strong>Damage Percentage:</strong> {{ percent }}%</p>
-        <p><strong>Road Condition:</strong> {{ condition }}</p>
+        <p><strong>Total Frames:</strong> {{ total_frames }}</p>
+        <p><strong>Pothole Frames:</strong> {{ pothole_frames }}</p>
+        <p><strong>Damage Percentage:</strong> {{ damage_percentage }}%</p>
+        <p><strong>Road Condition:</strong> {{ road_condition }}</p>
 
         <div class="progress-bar">
-            <div class="progress-fill {{ bar_class }}" style="width: {{ percent }}%;">
-                {{ percent }}%
+            <div class="progress-fill 
+                {% if damage_percentage < 20 %}
+                    good
+                {% elif damage_percentage <= 50 %}
+                    moderate
+                {% else %}
+                    severe
+                {% endif %}
+            " style="width: {{ damage_percentage }}%;">
+                {{ damage_percentage }}%
             </div>
         </div>
     </div>

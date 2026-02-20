@@ -1,85 +1,114 @@
 from flask import Flask, render_template, request
-import tensorflow as tf
-import numpy as np
-import cv2
 import os
+import cv2
+import numpy as np
+import tensorflow as tf   # Use tensorflow locally for TFLite interpreter
+from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
+
 UPLOAD_FOLDER = "uploads"
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-# Load trained model
-model = tf.keras.models.load_model("pothole_model.h5")
+app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50MB limit
 
+if not os.path.exists(UPLOAD_FOLDER):
+    os.makedirs(UPLOAD_FOLDER)
 
-def process_video(video_path):
-    cap = cv2.VideoCapture(video_path)
+interpreter = tf.lite.Interpreter(model_path="pothole_model.tflite")
+interpreter.allocate_tensors()
 
-    total_frames = 0
-    pothole_frames = 0
-    frame_count = 0   
+input_details = interpreter.get_input_details()
+output_details = interpreter.get_output_details()
 
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
+def predict_frame(frame):
+    # Resize to 128x128 (YOUR MODEL SIZE)
+    frame = cv2.resize(frame, (128, 128))
 
-        frame_count += 1
+    # Normalize
+    frame = frame / 255.0
 
-        if frame_count % 30 != 0:
-            continue
+    # Expand dimensions
+    frame = np.expand_dims(frame, axis=0).astype(np.float32)
 
-        total_frames += 1
+    # Set tensor
+    interpreter.set_tensor(input_details[0]['index'], frame)
 
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        frame = cv2.resize(frame, (128, 128))
-        frame = frame / 255.0
-        frame = np.expand_dims(frame, axis=0)
+    # Run inference
+    interpreter.invoke()
 
-        prediction = model.predict(frame, verbose=0)[0][0]
+    # Get output
+    prediction = interpreter.get_tensor(output_details[0]['index'])
 
-        if prediction > 0.5:
-            pothole_frames += 1
-
-    cap.release()
-
-    damage_percent = (pothole_frames / total_frames) * 100 if total_frames > 0 else 0
-
-    if damage_percent < 20:
-        condition = "Good Road"
-        bar_class = "good"
-    elif damage_percent < 50:
-        condition = "Moderate Damage"
-        bar_class = "moderate"
-    else:
-        condition = "Severe Damage"
-        bar_class = "severe"
-
-    return total_frames, pothole_frames, round(damage_percent, 2), condition, bar_class
-
+    return float(prediction[0][0])
 
 @app.route("/", methods=["GET", "POST"])
 def index():
     if request.method == "POST":
-        video = request.files["video"]
+        if "video" not in request.files:
+            return render_template("index.html")
 
-        if video:
-            video_path = os.path.join(app.config["UPLOAD_FOLDER"], video.filename)
-            video.save(video_path)
+        file = request.files["video"]
 
-            total, potholes, percent, condition, bar_class = process_video(video_path)
+        if file.filename == "":
+            return render_template("index.html")
 
-            return render_template(
-                "index.html",
-                total=total,
-                potholes=potholes,
-                percent=percent,
-                condition=condition,
-                bar_class=bar_class
-            )
+        filename = secure_filename(file.filename)
+        filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+        file.save(filepath)
+
+        cap = cv2.VideoCapture(filepath)
+
+        total_frames = 0
+        pothole_frames = 0
+        frame_skip = 10
+
+        processed_frames = 0
+
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            total_frames += 1
+
+            if total_frames % frame_skip == 0:
+                processed_frames += 1
+
+                prediction = predict_frame(frame)
+
+                if prediction > 0.5:
+                    pothole_frames += 1
+
+        cap.release()
+
+        # Prevent division by zero
+        if processed_frames == 0:
+            damage_percentage = 0
+        else:
+            damage_percentage = (pothole_frames / processed_frames) * 100
+
+        damage_percentage = round(damage_percentage, 2)
+
+        # Road condition logic
+        if damage_percentage < 20:
+            road_condition = "Good Road"
+        elif 20 <= damage_percentage <= 50:
+            road_condition = "Moderate Damage"
+        else:
+            road_condition = "Severe Damage"
+
+        return render_template(
+            "index.html",
+            total_frames=total_frames,
+            pothole_frames=pothole_frames,
+            damage_percentage=damage_percentage,
+            road_condition=road_condition
+        )
 
     return render_template("index.html")
 
 
+
 if __name__ == "__main__":
-    app.run(debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)

@@ -1,5 +1,5 @@
 flask
-tensorflow==2.15.0
+tflite-runtime
 numpy
 opencv-python-headless
 gunicorn
